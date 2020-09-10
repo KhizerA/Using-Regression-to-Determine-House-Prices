@@ -1,0 +1,144 @@
+setwd("C:/Users/khize/OneDrive/Desktop/STA302/Project/Datasets")
+train<-read.csv("train.csv", header=TRUE)
+library(plyr)
+library(MASS)
+library(car)
+
+#Allocated Codes legend code
+all.codes <- function(set) {
+  counts <- count(set)
+  options <- nrow(counts)
+  prices <- integer(options)
+  for (i in 1:length(set)) {
+    for (x in 1:options) {
+      if (set[i] == counts[x,1]) {
+        prices[x] <- prices[x] + train$SalePrice[i]
+      }
+    }
+  }
+  prices <- prices/counts[2]
+  allocated_code <- c(1:options)
+  output <- data.frame(counts, prices)
+  output<- output[order(output$freq.1),]
+  output$allocated_code <- allocated_code
+  return(output[,c(1,4)])
+}
+all.codes(train$Neighborhood)
+all.codes(train$Exterior1st)
+
+#Random sampling for the training and test sets, code taken from Dionysius
+set.seed(1002605120)
+sample_size<-floor(.5*nrow(train))
+picked<-sample(seq_len(nrow(train)), size=sample_size)
+training<-train[picked,]
+testing<-train[-picked,]
+
+#Function to sort the non-binary variables in chronological order by means 
+# for discrete predictors
+test <- lm(formula = SalePrice ~   Foundation  , data = training)
+sorter <- function(set) {
+  counts <- count(set)
+  options <- nrow(counts)
+  prices <- integer(options)
+  for (i in 1:length(set)) {
+    for (x in 1:options) {
+      if (set[i] == counts[x,1]) {
+        prices[x] <- prices[x] + training$SalePrice[i]
+      }
+    }
+  }
+  prices <- prices/counts[2]
+  output <- data.frame(counts, prices)
+  output<- output[order(output$freq.1),]
+  D <- set
+  for (i in 1:nrow(output)) {
+   D[D == toString(output[i,1])] <- i
+  }
+  return(as.numeric(D))
+}
+
+#Defining the final predictors and response variable
+SalePrice <- training$SalePrice
+Neighborhood <- sorter(training$Neighborhood) 
+Exterior <- sorter(training$Exterior1st) 
+Type <- training$BldgType  ## BUILDING TYPE 3
+Type[Type == "2fmCon" ] <- "Twnhs"
+Type[Type == "Duplex" ] <- "Twnhs"
+Type[Type == "TwnhsE" ] <- "Twnhs"
+Type[Type == "Twnhs" ] <- "Attached"
+Type[Type == "1Fam" ] <- "Detached"
+CentralAir <- training$CentralAir
+
+#Regression model
+categ <- lm(formula = log(SalePrice) ~  CentralAir  + Type + Neighborhood + Exterior)
+
+#Explanatory Analysis section figures
+Type.I <- as.numeric(factor(Type))
+CentralAir.I <- as.numeric(factor(CentralAir))
+all.data <- data.frame(log(SalePrice), Neighborhood, Exterior, Type.I, CentralAir.I)
+pairs(all.data)
+cor(all.data)
+
+#Model Development
+# Significance of Estimates 
+summary(categ)
+# Model Selection 
+step <- stepAIC(categ, direction = "both")
+step$anova
+# Model Validation 
+CentralAir.t <- testing$CentralAir
+Type.t <- testing$BldgType
+Type.t[Type.t == "2fmCon" ] <- "Twnhs"
+Type.t[Type.t == "Duplex" ] <- "Twnhs"
+Type.t[Type.t == "TwnhsE" ] <- "Twnhs"
+Type.t[Type.t == "Twnhs" ] <- "Attached"
+Type.t[Type.t == "1Fam" ] <- "Detached"
+Neighborhood.t <- sorter(testing$Neighborhood)
+Exterior.t <- sorter(testing$Exterior1st)
+SalePrice.t <- testing$SalePrice
+test.reg <- lm(formula = log(SalePrice.t)~ CentralAir.t + Type.t + Neighborhood.t + Exterior.t )
+anova(test.reg)
+
+# Diagnostics 
+# IFF 
+Residual <- resid(categ)
+b.type <- as.numeric(factor(Type))
+b.type[b.type == 1] <- 0
+b.type[b.type == 2] <- 1
+b.centralair <- as.numeric(factor(CentralAir))
+b.centralair[b.centralair == 1] <- 0
+b.centralair[b.centralair== 2] <- 1
+par(mfrow = c(2,2))
+plot(Neighborhood, Residual, main = "Residual Plot for Neighborhood")
+abline(h = 0, col = "red")
+plot(Exterior, Residual, main = "Residual Plot for Exterior Material")
+abline(h = 0, col = "red")
+plot(b.type, Residual, main = "Residual Plot for Building Type")
+abline(h = 0, col = "red")
+plot(b.centralair, Residual, main = "Residual Plot for Central AC")
+abline(h = 0, col = "red")
+# Outliers, taken from week 6 code
+t <- rstudent(categ)
+Pii <- hatvalues(categ)
+n <- length(log(SalePrice))
+alpha <- 0.05
+p_prime = length(coef(categ)) 
+t_crit <- qt(1-alpha/(2*n),n-p_prime-1)
+round(t,2)
+t_crit
+which(abs(t) > t_crit)
+outlier.t <- (2*(sum(Pii)))/length(Pii)
+which(Pii > outlier.t)
+which(Pii > 0.5)
+# Cook's Distance for influential points, taken from Shirley 
+CD <- cooks.distance(categ)
+border =qf(.95, df1=4, df2=725)
+which(CD>border)
+# Multi-collinearity test
+VIF <-vif(categ)
+VIF
+meanVIF <- sum(VIF[,3])/nrow(VIF)
+meanVIF
+# Diagnostic Plots
+layout(matrix(c(1,2,3,4),2,2))
+plot(categ)
